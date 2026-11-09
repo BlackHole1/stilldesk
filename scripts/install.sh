@@ -1,71 +1,58 @@
 #!/bin/bash
-# 把 StillDesk 安装到 ToDesk.app 里。
-#
-#   ./scripts/install.sh [path/to/ToDesk.app]
-#
-# 会改什么，不会改什么：
-#   * 把 libStillDesk.dylib 和 stilldesk-launch 复制到 Contents/libexec/
-#   * 把 Info.plist 的 :CFBundleExecutable 指向启动器
-#   * ToDesk 的可执行文件本身从不触碰，签名保持不变
-#
-# ToDesk 每次升级都会恢复自己的 Info.plist，所以升级后要重跑一次。
+# 安装独立的 StillDesk.app，保留 ToDesk 原来的启动入口。
+# 用法：./scripts/install.sh [path/to/ToDesk.app]
 set -euo pipefail
 
 APP="${1:-${STILLDESK_APP:-/Applications/ToDesk.app}}"
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-CONTENTS="$APP/Contents"
-LIBEXEC="$CONTENTS/libexec"
-TARGET="$CONTENTS/MacOS/ToDesk"
-EXEC_NAME="libexec/stilldesk-launch"
+WRAPPER="${STILLDESK_LAUNCHER_APP:-$HOME/Applications/StillDesk.app}"
 LSREGISTER="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
-
 die() { echo "error: $*" >&2; exit 1; }
 
-[ -d "$APP" ]      || die "app not found: $APP"
-[ -x "$TARGET" ]   || die "unexpected bundle layout, missing $TARGET"
+[ -d "$APP" ] || die "app not found: $APP"
+APP="$(cd "$APP" && pwd -P)"
+CONTENTS="$APP/Contents"
+TARGET="$CONTENTS/MacOS/ToDesk"
+[ -x "$TARGET" ] || die "unexpected bundle layout, missing $TARGET"
 [ -f "$HERE/build/libStillDesk.dylib" ] || die "run 'make' first"
-[ -f "$HERE/build/stilldesk-launch" ]   || die "run 'make' first"
+[ -f "$HERE/build/stilldesk-launch" ] || die "run 'make' first"
+[[ "$WRAPPER" = /*/StillDesk.app ]] || die "launcher path must be absolute and end with /StillDesk.app"
+[ "$WRAPPER" != "$APP" ] || die "launcher must be separate from ToDesk"
 
-mkdir -p "$LIBEXEC"
-cp -f "$HERE/build/libStillDesk.dylib" "$LIBEXEC/libStillDesk.dylib"
-cp -f "$HERE/build/stilldesk-launch"   "$LIBEXEC/stilldesk-launch"
-chmod 755 "$LIBEXEC/stilldesk-launch" "$LIBEXEC/libStillDesk.dylib"
-
-# StillDesk 之前的命名留下的产物
-rm -f "$LIBEXEC/libNoPreset.dylib" "$LIBEXEC/ToDeskLauncher"
-
-CUR="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$CONTENTS/Info.plist" 2>/dev/null || true)"
-if [ "$CUR" != "$EXEC_NAME" ]; then
-    # 保留原始 plist 给 uninstall.sh 用（只在第一次）
-    if [ ! -f "$LIBEXEC/Info.plist.orig" ]; then
-        cp "$CONTENTS/Info.plist" "$LIBEXEC/Info.plist.orig"
-    fi
+# 迁移旧安装时只还原启动入口，不使用可能已被修改的历史备份。
+CUR="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$CONTENTS/Info.plist")"
+if [ "$CUR" = "libexec/stilldesk-launch" ] || [ "$CUR" = "libexec/ToDeskLauncher" ]; then
     TMP="$(mktemp /tmp/stilldesk-info.XXXXXX)"
+    trap 'rm -f "${TMP:-}"' EXIT
     cp "$CONTENTS/Info.plist" "$TMP"
-    /usr/libexec/PlistBuddy -c "Set :CFBundleExecutable $EXEC_NAME" "$TMP"
+    /usr/libexec/PlistBuddy -c 'Set :CFBundleExecutable ToDesk' "$TMP"
     plutil -lint "$TMP" >/dev/null
-    # Info.plist 属主是 root：只能在 Contents/ 里通过改名替换
     cp "$TMP" "$CONTENTS/.Info.plist.stilldesk"
     chmod 644 "$CONTENTS/.Info.plist.stilldesk"
     mv "$CONTENTS/.Info.plist.stilldesk" "$CONTENTS/Info.plist"
-    rm -f "$TMP"
-    echo "Info.plist: CFBundleExecutable -> $EXEC_NAME"
-else
-    echo "Info.plist: already installed"
+elif [ "$CUR" != "ToDesk" ]; then
+    die "unexpected executable: $CUR"
 fi
 
-[ -x "$LSREGISTER" ] && "$LSREGISTER" -f "$APP" >/dev/null 2>&1 || true
-
-cat <<MSG
-
-StillDesk installed into $APP
-
-  1. quit ToDesk completely (menu bar icon -> quit)
-  2. open it again:  open -a "$APP"
-
-Logs:  ~/Library/Logs/StillDesk.log
-Rules: ~/.config/stilldesk/preset-blocklist
-       ~/.config/stilldesk/hide-notify
-
-Uninstall: ./scripts/uninstall.sh "$APP"
-MSG
+mkdir -p "$WRAPPER/Contents/MacOS"
+cp "$HERE/build/libStillDesk.dylib" "$WRAPPER/Contents/MacOS/libStillDesk.dylib"
+cp "$HERE/build/stilldesk-launch" "$WRAPPER/Contents/MacOS/stilldesk-launch"
+chmod 755 "$WRAPPER/Contents/MacOS/stilldesk-launch" "$WRAPPER/Contents/MacOS/libStillDesk.dylib"
+printf '%s\n' "$TARGET" > "$WRAPPER/Contents/MacOS/target-path"
+cat > "$WRAPPER/Contents/Info.plist" <<'PLIST'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+<key>CFBundleExecutable</key><string>stilldesk-launch</string>
+<key>CFBundleIdentifier</key><string>io.github.BlackHole1.stilldesk</string>
+<key>CFBundleName</key><string>StillDesk</string>
+<key>CFBundlePackageType</key><string>APPL</string>
+<key>CFBundleVersion</key><string>1</string>
+</dict></plist>
+PLIST
+plutil -lint "$WRAPPER/Contents/Info.plist" >/dev/null
+if [ -x "$LSREGISTER" ]; then
+    "$LSREGISTER" -f "$APP" >/dev/null 2>&1 || true
+    "$LSREGISTER" -f "$WRAPPER" >/dev/null 2>&1 || true
+fi
+printf '已安装：%s\n退出 ToDesk 后，打开 StillDesk 启用弹窗过滤：\n  open "%s"\n直接打开 ToDesk 则使用原版启动方式。\n' "$WRAPPER" "$WRAPPER"

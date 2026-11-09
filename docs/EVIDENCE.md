@@ -181,6 +181,23 @@ CMainDlg::processExpiringNotify    0x07f5dc   首指令 0xA9BA6FFC
 * 直接改磁盘上的二进制：会破坏代码签名（App 是开发者 ID 签名加 hardened runtime），
   还会牵连 TCC 授权、钥匙串条目和特权辅助进程。注入方式这些全都不动。
 
+## 启动配置兼容性修复（2026-11-09）
+
+在 macOS 27.3（26C5035r）上，旧安装方式把 ToDesk 的 `CFBundleExecutable`
+改成 `libexec/stilldesk-launch`，导致系统在初始化前以信号 9 终止程序，日志为：
+
+```
+ASP: Security policy would not allow process: ..., /Applications/ToDesk.app/Contents/MacOS/ToDesk
+```
+
+恢复 `CFBundleExecutable=ToDesk` 后，原版启动和单独注入都成功。
+因此，仅保留可执行文件的原签名还不足以保证启动兼容性，应用的启动元数据也要保持原样。
+现在使用独立的 `~/Applications/StillDesk.app`，从 `target-path` 读取目标程序路径后注入并启动。
+ToDesk 本身保留原入口。旧安装的备份也可能包含旧启动器路径，迁移和卸载均明确恢复为 `ToDesk`。
+
+`python3 tools/test-install.py` 验证原配置保持不变、独立启动、重复安装、两种旧入口迁移及卸载。
+本机另外验证了原版入口和独立启动器都能启动真正的 ToDesk，过滤日志正常。
+
 ## 升级后如何重新取偏移
 
 ```bash
