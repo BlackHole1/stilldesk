@@ -26,11 +26,13 @@ make
 ./scripts/install.sh
 ```
 
-然后彻底退出 ToDesk，重新打开：
+然后彻底退出 ToDesk，通过独立启动器打开：
 
 ```bash
-open -a ToDesk
+open ~/Applications/StillDesk.app
 ```
+
+以后使用 StillDesk 启动即可保留弹窗过滤。直接打开 ToDesk 会使用原版启动方式。安装器会自动恢复旧版 StillDesk 改过的启动入口，避免应用在启动检查阶段退出。
 
 确认是否生效：
 
@@ -65,7 +67,7 @@ tail -n 20 ~/Library/Logs/StillDesk.log
 
 ## 升级 ToDesk 之后
 
-ToDesk 升级会覆盖启动器，重跑一次安装即可。
+独立启动器位于 `~/Applications/StillDesk.app`，ToDesk 升级后仍会保留。更新 StillDesk 后重新构建并安装：
 
 ```bash
 make && ./scripts/install.sh
@@ -79,7 +81,7 @@ make && ./scripts/install.sh
 ./scripts/uninstall.sh
 ```
 
-会还原 `Info.plist` 并删掉注入的文件，规则和日志保留。
+会移除独立启动器，并恢复旧版安装留下的启动入口，规则和日志保留。
 
 ## 原理
 
